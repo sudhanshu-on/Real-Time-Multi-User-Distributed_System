@@ -2,6 +2,7 @@ import { protect } from "../middlewares/auth.middleware.js";
 import {
   getDocs,
   createDoc,
+  addCollaborator,
   updateDoc,
   deleteDoc,
 } from "../controllers/docs.controller.js";
@@ -11,6 +12,7 @@ const router = Router();
 
 router.get("/", protect, getDocs);
 router.post("/createdocs", protect, createDoc);
+router.post("/addcollaborator/:docId", protect, addCollaborator);
 router.put("/updatedocs/:docId", protect, updateDoc);
 router.delete("/deletedocs/:docId", protect, deleteDoc);
 

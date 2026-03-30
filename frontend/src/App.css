@@ -1,0 +1,387 @@
+.app-shell {
+  width: min(1180px, 95vw);
+  margin: 0 auto;
+  padding: 2rem 0 3rem;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.badge {
+  display: inline-flex;
+  margin: 0;
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #4d3e36;
+  background: #f5e5da;
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+}
+
+.subtitle {
+  margin-top: 0.25rem;
+  color: #5a676f;
+}
+
+.user-block {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.feedback {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 0.75rem;
+  font-weight: 500;
+}
+
+.feedback.error {
+  background: #ffe1df;
+  border: 1px solid #f3b4ae;
+  color: #8e2218;
+}
+
+.feedback.notice {
+  background: #e2f4de;
+  border: 1px solid #b3d8ac;
+  color: #225629;
+}
+
+.auth-card {
+  width: min(470px, 100%);
+  margin: 2rem auto;
+  background: rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(10px);
+  border-radius: 1.25rem;
+  border: 1px solid #ecd8ca;
+  box-shadow: 0 24px 40px rgba(70, 33, 11, 0.1);
+  overflow: hidden;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.tabs button {
+  border-radius: 0;
+  border: 0;
+  border-bottom: 1px solid #ecd8ca;
+  background: #f8f1ea;
+  color: #6e4e3b;
+}
+
+.tabs button.active {
+  background: #fff;
+  color: #24160f;
+  font-weight: 700;
+}
+
+.auth-form {
+  padding: 1.2rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: 330px 1fr;
+  gap: 1rem;
+}
+
+.docs-panel,
+.editor-panel {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #ecd8ca;
+  border-radius: 1rem;
+  box-shadow: 0 15px 30px rgba(58, 35, 21, 0.08);
+}
+
+.docs-panel {
+  padding: 1rem;
+}
+
+.create-form {
+  display: grid;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.doc-list {
+  display: grid;
+  gap: 0.6rem;
+  max-height: 450px;
+  overflow: auto;
+}
+
+.doc-item {
+  text-align: left;
+  border: 1px solid #ebdfd7;
+  background: #fff;
+  border-radius: 0.7rem;
+  padding: 0.75rem;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.doc-item span {
+  display: block;
+  margin-top: 0.35rem;
+  color: #6b747a;
+  font-size: 0.9rem;
+}
+
+.doc-item:hover,
+.doc-item.active {
+  border-color: #dc9b72;
+  transform: translateY(-1px);
+}
+
+.editor-panel {
+  padding: 1rem;
+}
+
+.collaborator-panel {
+  margin-top: 0.85rem;
+  padding: 0.85rem;
+  border: 1px solid #ecd8ca;
+  border-radius: 0.8rem;
+  background: #fff8f3;
+}
+
+.collaborator-panel h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.collaborator-form {
+  margin-top: 0.55rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.55rem;
+}
+
+.collaborator-meta {
+  margin: 0.5rem 0 0;
+  color: #5f6a71;
+  font-size: 0.9rem;
+}
+
+.collaborator-toggle {
+  margin-top: 0.45rem;
+}
+
+.owner-meta {
+  margin-top: 0.35rem;
+}
+
+.collaborator-list {
+  margin-top: 0.55rem;
+  display: grid;
+  gap: 0.45rem;
+  max-height: 150px;
+  overflow: auto;
+}
+
+.collaborator-empty {
+  margin: 0;
+  color: #737c82;
+  font-size: 0.9rem;
+}
+
+.collaborator-chip {
+  border: 1px solid #e8d9ce;
+  background: #fff;
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.55rem;
+}
+
+.collaborator-chip strong {
+  display: block;
+  font-size: 0.88rem;
+}
+
+.collaborator-chip span {
+  display: block;
+  margin-top: 0.2rem;
+  color: #5f6a71;
+  font-size: 0.83rem;
+}
+
+.collaborator-feedback {
+  margin: 0.6rem 0 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.65rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.collaborator-feedback.error {
+  background: #ffe8e6;
+  color: #8e2218;
+  border: 1px solid #f3b4ae;
+}
+
+.collaborator-feedback.notice {
+  background: #e6f7e1;
+  color: #225629;
+  border: 1px solid #b3d8ac;
+}
+
+.editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.editor-form {
+  margin-top: 0.9rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.editor-textarea-wrap {
+  position: relative;
+}
+
+.editor-textarea-wrap textarea {
+  position: relative;
+  z-index: 1;
+}
+
+.remote-cursor-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+}
+
+.remote-cursor {
+  position: absolute;
+  transform: translate(-1px, 0);
+  transition: left 120ms linear, top 120ms linear;
+}
+
+.remote-cursor-caret {
+  display: block;
+  width: 2px;
+  height: 1.2rem;
+  background: #2f7cc0;
+  border-radius: 2px;
+}
+
+.remote-cursor-label {
+  display: inline-block;
+  margin-top: 0.15rem;
+  background: #2f7cc0;
+  color: #fff;
+  border-radius: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.active-editors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.editor-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #d2e5f8;
+  background: #eaf5ff;
+  color: #1e4566;
+  border-radius: 999px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  animation: editorPulse 1.6s ease-in-out infinite;
+}
+
+.editor-pill::before {
+  content: "";
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: #2f7cc0;
+  animation: editorDotBlink 1.1s ease-in-out infinite;
+}
+
+@keyframes editorPulse {
+  0% {
+    transform: translateY(0);
+    box-shadow: 0 0 0 rgba(47, 124, 192, 0);
+  }
+  50% {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 12px rgba(47, 124, 192, 0.16);
+  }
+  100% {
+    transform: translateY(0);
+    box-shadow: 0 0 0 rgba(47, 124, 192, 0);
+  }
+}
+
+@keyframes editorDotBlink {
+  0% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.5;
+  }
+}
+
+.empty {
+  color: #737c82;
+}
+
+.danger {
+  background: #fff0ef;
+  color: #8f2415;
+  border-color: #edc0ba;
+}
+
+@media (max-width: 940px) {
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .user-block {
+    justify-content: space-between;
+  }
+
+  .collaborator-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .collaborator-panel {
+    padding: 0.75rem;
+  }
+
+  .collaborator-form button {
+    width: 100%;
+  }
+}

@@ -61,4 +61,16 @@ const logout = asynchandler(async (req, res) => {
   res.status(200).json({ message: "Logged out successfully" });
 });
 
-export { signin, signup, logout };
+const getCurrentUser = asynchandler(async (req, res) => {
+  res.status(200).json({
+    message: "Current user retrieved successfully",
+    user: {
+      _id: req.user._id,
+      name: req.user.name,
+      email: req.user.email,
+      avatar: req.user.avatar,
+    },
+  });
+});
+
+export { signin, signup, logout, getCurrentUser };

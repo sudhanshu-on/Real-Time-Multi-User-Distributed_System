@@ -19,6 +19,12 @@ const docsSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    collaborators: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
     version: {
       type: Number,
       required: true,
