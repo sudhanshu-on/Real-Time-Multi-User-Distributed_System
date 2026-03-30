@@ -379,7 +379,7 @@ const registerSocketHandlers = (io) => {
 const initializeSocketServer = (server) => {
   const io = new Server(server, {
     cors: {
-      origin: "http://localhost:5000",
+      origin: "https://real-time-multi-user-distributed-sy.vercel.app",
       credentials: true,
     },
   });

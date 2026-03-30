@@ -3,7 +3,7 @@ import { io } from "socket.io-client";
 
 dotenv.config();
 
-const SERVER_URL = process.env.SERVER_URL || "http://localhost:3000";
+const SERVER_URL = process.env.SERVER_URL;
 const TOKEN = process.env.TOKEN;
 const DOCUMENT_ID = process.env.DOCUMENT_ID;
 const INSERT_TEXT = "HELLO_MY_NAME_IS_TESTER";
