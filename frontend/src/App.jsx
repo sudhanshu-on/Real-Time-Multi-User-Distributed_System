@@ -708,7 +708,7 @@ function App() {
         <div>
           <p className="badge">Realtime workspace</p>
           <h1>{appName}</h1>
-          <p className="subtitle">Connected to {API_BASE_URL}</p>
+          <p className="subtitle">Connected to the Server</p>
         </div>
         {user ? (
           <div className="user-block">
