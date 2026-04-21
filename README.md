@@ -50,7 +50,7 @@ CORS_ORIGIN=http://localhost:5173
 
 **Frontend** (`frontend/.env`):
 ```bash
-VITE_API_BASE_URL=http://localhost:5000
+VITE_API_BASE_URL=http://localhost:3000
 VITE_API_PREFIX=/api/v1
 VITE_APP_NAME=Collab Docs
 ```
