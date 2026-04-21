@@ -55,6 +55,172 @@ const io = new Server(server, {
   connectTimeout: 45000,
   allowEIO3: true,
 });
+const MAX_OPERATION_HISTORY = 1000;
+const operationHistoryByDocument = new Map();
+
+const compareOpOrder = (a, b) => {
+  if (a.opId < b.opId) {
+    return -1;
+  }
+
+  if (a.opId > b.opId) {
+    return 1;
+  }
+
+  if ((a.userId || "") < (b.userId || "")) {
+    return -1;
+  }
+
+  if ((a.userId || "") > (b.userId || "")) {
+    return 1;
+  }
+
+  return 0;
+};
+
+const toNoop = (op) => ({
+  ...op,
+  type: "noop",
+});
+
+const transformOperation = (op1, op2) => {
+  if (op2.type === "noop") {
+    return op2;
+  }
+
+  const out = { ...op2 };
+
+  const op1Insert = op1.type === "insert";
+  const op1Delete = op1.type === "delete";
+  const op2Insert = op2.type === "insert";
+  const op2Delete = op2.type === "delete";
+
+  if (op1Insert && op2Insert) {
+    if (op1.position < out.position) {
+      out.position += op1.value.length;
+      return out;
+    }
+
+    if (op1.position === out.position && compareOpOrder(op1, out) <= 0) {
+      out.position += op1.value.length;
+    }
+
+    return out;
+  }
+
+  if (op1Insert && op2Delete) {
+    const delStart = out.position;
+    const delEnd = out.position + out.length;
+
+    if (op1.position <= delStart) {
+      out.position += op1.value.length;
+    } else if (op1.position < delEnd) {
+      out.length += op1.value.length;
+    }
+
+    return out;
+  }
+
+  if (op1Delete && op2Insert) {
+    const delStart = op1.position;
+    const delEnd = op1.position + op1.length;
+
+    if (out.position > delEnd) {
+      out.position -= op1.length;
+    } else if (out.position > delStart && out.position <= delEnd) {
+      out.position = delStart;
+    }
+
+    return out;
+  }
+
+  if (op1Delete && op2Delete) {
+    const aStart = op1.position;
+    const aEnd = op1.position + op1.length;
+    let bStart = out.position;
+    const bEnd = out.position + out.length;
+
+    if (bEnd <= aStart) {
+      return out;
+    }
+
+    if (bStart >= aEnd) {
+      out.position -= op1.length;
+      return out;
+    }
+
+    const overlapStart = Math.max(aStart, bStart);
+    const overlapEnd = Math.min(aEnd, bEnd);
+    const overlapLength = Math.max(0, overlapEnd - overlapStart);
+
+    out.length -= overlapLength;
+    if (out.length <= 0) {
+      return toNoop(out);
+    }
+
+    if (bStart >= aStart) {
+      bStart = aStart;
+    }
+
+    out.position = bStart;
+    return out;
+  }
+
+  return out;
+};
+
+const applyOperationToContent = (content, operation) => {
+  if (operation.type === "noop") {
+    return content;
+  }
+
+  if (operation.type === "insert") {
+    return (
+      content.slice(0, operation.position) +
+      operation.value +
+      content.slice(operation.position)
+    );
+  }
+
+  if (operation.type === "delete") {
+    return (
+      content.slice(0, operation.position) +
+      content.slice(operation.position + operation.length)
+    );
+  }
+
+  return content;
+};
+
+const getDocumentHistoryState = (documentId, currentVersion) => {
+  const key = documentId.toString();
+  const existing = operationHistoryByDocument.get(key);
+
+  if (!existing) {
+    const initialized = {
+      baseVersion: currentVersion,
+      operations: [],
+    };
+    operationHistoryByDocument.set(key, initialized);
+    return initialized;
+  }
+
+  if (existing.baseVersion + existing.operations.length !== currentVersion) {
+    existing.baseVersion = currentVersion;
+    existing.operations = [];
+  }
+
+  return existing;
+};
+
+const hasDocumentAccess = (doc, userId) => {
+  const isOwner = doc.owner.toString() === userId;
+  const isCollaborator = doc.collaborators.some(
+    (collaboratorId) => collaboratorId.toString() === userId,
+  );
+
+  return isOwner || isCollaborator;
+};
 
 const parseCookieHeader = (cookieHeader = "") => {
   return cookieHeader
@@ -137,17 +303,14 @@ io.on("connection", (socket) => {
         return socket.emit("document-error", "Document not found");
       }
 
-      const isOwner = doc.owner.toString() === userId;
-      const isCollaborator = doc.collaborators.some(
-        (collaboratorId) => collaboratorId.toString() === userId,
-      );
-
-      if (!isOwner && !isCollaborator) {
+      if (!hasDocumentAccess(doc, userId)) {
         return socket.emit(
           "document-error",
           "Access denied: you are not a collaborator on this document",
         );
       }
+
+      getDocumentHistoryState(documentId, doc.version);
 
       socket.join(documentId);
       console.log(`User ${userId} joined document ${documentId}`);
@@ -207,14 +370,14 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("document-content-change", async (payload) => {
+  socket.on("send-operation", async (payload) => {
     const userId = socket.user?.id;
 
     try {
-      const { documentId, content } = payload || {};
+      const { documentId, operation } = payload || {};
 
-      if (!documentId || typeof content !== "string") {
-        return socket.emit("document-error", "Invalid realtime update payload");
+      if (!documentId || !operation || typeof operation !== "object") {
+        return socket.emit("document-error", "Invalid operation payload");
       }
 
       const doc = await Document.findById(documentId);
@@ -222,37 +385,126 @@ io.on("connection", (socket) => {
         return socket.emit("document-error", "Document not found");
       }
 
-      const isOwner = doc.owner.toString() === userId;
-      const isCollaborator = doc.collaborators.some(
-        (collaboratorId) => collaboratorId.toString() === userId,
-      );
-
-      if (!isOwner && !isCollaborator) {
+      if (!hasDocumentAccess(doc, userId)) {
         return socket.emit("document-error", "Access denied");
       }
 
+      if (typeof operation.opId !== "string") {
+        return socket.emit("document-error", "Operation opId is required");
+      }
+
+      if (typeof operation.version !== "number") {
+        return socket.emit("document-error", "Operation version is required");
+      }
+
+      if (operation.type !== "insert" && operation.type !== "delete") {
+        return socket.emit("document-error", "Unsupported operation type");
+      }
+
+      if (!Number.isInteger(operation.position) || operation.position < 0) {
+        return socket.emit("document-error", "Operation position must be a non-negative integer");
+      }
+
+      if (operation.type === "insert" && typeof operation.value !== "string") {
+        return socket.emit("document-error", "Insert operation requires value");
+      }
+
+      if (
+        operation.type === "delete" &&
+        (!Number.isInteger(operation.length) || operation.length <= 0)
+      ) {
+        return socket.emit("document-error", "Delete operation requires positive integer length");
+      }
+
+      const historyState = getDocumentHistoryState(documentId, doc.version);
+      if (operation.version < historyState.baseVersion) {
+        return socket.emit("resync-required", {
+          documentId,
+          content: doc.content,
+          version: doc.version,
+        });
+      }
+
+      let transformedOperation = {
+        ...operation,
+        userId,
+      };
+
+      const startIndex = operation.version - historyState.baseVersion;
+      if (startIndex < 0 || startIndex > historyState.operations.length) {
+        return socket.emit("resync-required", {
+          documentId,
+          content: doc.content,
+          version: doc.version,
+        });
+      }
+
+      const missedOperations = historyState.operations.slice(startIndex);
+      for (const missedOperation of missedOperations) {
+        transformedOperation = transformOperation(missedOperation, transformedOperation);
+      }
+
+      if (transformedOperation.type !== "noop") {
+        if (transformedOperation.type === "insert") {
+          if (transformedOperation.position > doc.content.length) {
+            return socket.emit("resync-required", {
+              documentId,
+              content: doc.content,
+              version: doc.version,
+            });
+          }
+        }
+
+        if (
+          transformedOperation.type === "delete" &&
+          transformedOperation.position + transformedOperation.length > doc.content.length
+        ) {
+          return socket.emit("resync-required", {
+            documentId,
+            content: doc.content,
+            version: doc.version,
+          });
+        }
+      }
+
+      const nextContent = applyOperationToContent(doc.content, transformedOperation);
+
       const updatedDoc = await Document.findByIdAndUpdate(
-        documentId,
+        { _id: documentId, version: doc.version },
         {
-          $set: { content },
+          $set: { content: nextContent },
           $inc: { version: 1 },
         },
         { new: true },
       );
 
-      socket.to(documentId).emit("document-content-updated", {
+      if (!updatedDoc) {
+        const latestDoc = await Document.findById(documentId);
+        return socket.emit("resync-required", {
+          documentId,
+          content: latestDoc?.content || "",
+          version: latestDoc?.version || doc.version,
+        });
+      }
+
+      const canonicalOperation = {
+        ...transformedOperation,
         documentId,
-        content: updatedDoc?.content || content,
-        version: updatedDoc?.version || doc.version + 1,
-        senderSocketId: socket.id,
-        editedBy: {
-          userId: socket.user?.id,
-          userName: socket.user?.name || "Unknown user",
-        },
-      });
+        userId,
+        userName: socket.user?.name || "Unknown user",
+        version: updatedDoc.version,
+      };
+
+      historyState.operations.push(canonicalOperation);
+      while (historyState.operations.length > MAX_OPERATION_HISTORY) {
+        historyState.operations.shift();
+        historyState.baseVersion += 1;
+      }
+
+      io.to(documentId).emit("receive-operation", canonicalOperation);
     } catch (error) {
-      console.error("Error applying realtime update:", error);
-      socket.emit("document-error", "Failed to apply realtime update");
+      console.error("Error applying OT operation:", error);
+      socket.emit("document-error", "Failed to apply operation");
     }
   });
 

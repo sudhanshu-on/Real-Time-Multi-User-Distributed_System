@@ -25,6 +25,189 @@ const initialDocForm = {
   content: "",
 };
 
+const compareOpOrder = (a, b) => {
+  if (a.opId < b.opId) {
+    return -1;
+  }
+
+  if (a.opId > b.opId) {
+    return 1;
+  }
+
+  if ((a.userId || "") < (b.userId || "")) {
+    return -1;
+  }
+
+  if ((a.userId || "") > (b.userId || "")) {
+    return 1;
+  }
+
+  return 0;
+};
+
+const transformOperation = (op1, op2) => {
+  if (op2.type === "noop") {
+    return op2;
+  }
+
+  const out = { ...op2 };
+  const op1Insert = op1.type === "insert";
+  const op1Delete = op1.type === "delete";
+  const op2Insert = op2.type === "insert";
+  const op2Delete = op2.type === "delete";
+
+  if (op1Insert && op2Insert) {
+    if (op1.position < out.position) {
+      out.position += op1.value.length;
+      return out;
+    }
+
+    if (op1.position === out.position && compareOpOrder(op1, out) <= 0) {
+      out.position += op1.value.length;
+    }
+
+    return out;
+  }
+
+  if (op1Insert && op2Delete) {
+    const delStart = out.position;
+    const delEnd = out.position + out.length;
+
+    if (op1.position <= delStart) {
+      out.position += op1.value.length;
+    } else if (op1.position < delEnd) {
+      out.length += op1.value.length;
+    }
+
+    return out;
+  }
+
+  if (op1Delete && op2Insert) {
+    const delStart = op1.position;
+    const delEnd = op1.position + op1.length;
+
+    if (out.position > delEnd) {
+      out.position -= op1.length;
+    } else if (out.position > delStart && out.position <= delEnd) {
+      out.position = delStart;
+    }
+
+    return out;
+  }
+
+  if (op1Delete && op2Delete) {
+    const aStart = op1.position;
+    const aEnd = op1.position + op1.length;
+    let bStart = out.position;
+    const bEnd = out.position + out.length;
+
+    if (bEnd <= aStart) {
+      return out;
+    }
+
+    if (bStart >= aEnd) {
+      out.position -= op1.length;
+      return out;
+    }
+
+    const overlapStart = Math.max(aStart, bStart);
+    const overlapEnd = Math.min(aEnd, bEnd);
+    const overlapLength = Math.max(0, overlapEnd - overlapStart);
+
+    out.length -= overlapLength;
+    if (out.length <= 0) {
+      return {
+        ...out,
+        type: "noop",
+      };
+    }
+
+    if (bStart >= aStart) {
+      bStart = aStart;
+    }
+
+    out.position = bStart;
+    return out;
+  }
+
+  return out;
+};
+
+const applyOperationToContent = (content, operation) => {
+  if (operation.type === "noop") {
+    return content;
+  }
+
+  if (operation.type === "insert") {
+    return (
+      content.slice(0, operation.position) +
+      operation.value +
+      content.slice(operation.position)
+    );
+  }
+
+  if (operation.type === "delete") {
+    return (
+      content.slice(0, operation.position) +
+      content.slice(operation.position + operation.length)
+    );
+  }
+
+  return content;
+};
+
+const deriveOperationsFromContentChange = ({ previousContent, nextContent, userId, createOpId }) => {
+  if (previousContent === nextContent) {
+    return [];
+  }
+
+  let start = 0;
+  while (
+    start < previousContent.length &&
+    start < nextContent.length &&
+    previousContent[start] === nextContent[start]
+  ) {
+    start += 1;
+  }
+
+  let prevEnd = previousContent.length - 1;
+  let nextEnd = nextContent.length - 1;
+  while (
+    prevEnd >= start &&
+    nextEnd >= start &&
+    previousContent[prevEnd] === nextContent[nextEnd]
+  ) {
+    prevEnd -= 1;
+    nextEnd -= 1;
+  }
+
+  const deletedText = previousContent.slice(start, prevEnd + 1);
+  const insertedText = nextContent.slice(start, nextEnd + 1);
+  const operations = [];
+
+  if (deletedText.length > 0) {
+    operations.push({
+      opId: createOpId(),
+      userId,
+      type: "delete",
+      position: start,
+      length: deletedText.length,
+    });
+  }
+
+  if (insertedText.length > 0) {
+    operations.push({
+      opId: createOpId(),
+      userId,
+      type: "insert",
+      position: start,
+      value: insertedText,
+    });
+  }
+
+  return operations;
+};
+
 function App() {
   const appName = import.meta.env.VITE_APP_NAME || "Collab Docs";
   const [mode, setMode] = useState("signin");
@@ -45,8 +228,11 @@ function App() {
   const [activeEditors, setActiveEditors] = useState([]);
   const [lastEditedBy, setLastEditedBy] = useState("");
   const socketRef = useRef(null);
-  const emitTimerRef = useRef(null);
   const cursorEmitTimerRef = useRef(null);
+  const pendingOperationsRef = useRef([]);
+  const receivedOperationBufferRef = useRef(new Map());
+  const knownVersionRef = useRef(0);
+  const localOperationCounterRef = useRef(0);
   const selectedDocIdRef = useRef("");
   const docsRef = useRef([]);
   const userRef = useRef(null);
@@ -167,6 +353,109 @@ function App() {
     return fallbackName || "Unknown user";
   };
 
+  const createLocalOpId = () => {
+    localOperationCounterRef.current += 1;
+    return `${userRef.current?._id || "anonymous"}:${Date.now()}:${localOperationCounterRef.current}`;
+  };
+
+  const trySendNextPendingOperation = () => {
+    if (!socketRef.current || !selectedDocIdRef.current) {
+      return;
+    }
+
+    const queue = pendingOperationsRef.current;
+    if (!queue.length || queue[0].sent) {
+      return;
+    }
+
+    const operationToSend = {
+      ...queue[0],
+      version: knownVersionRef.current,
+    };
+
+    queue[0] = {
+      ...operationToSend,
+      sent: true,
+    };
+
+    socketRef.current.emit("send-operation", {
+      documentId: selectedDocIdRef.current,
+      operation: operationToSend,
+    });
+  };
+
+  const updateDocStateWithOperation = (operation) => {
+    setDocs((previous) =>
+      previous.map((doc) => {
+        if (doc._id !== operation.documentId) {
+          return doc;
+        }
+
+        return {
+          ...doc,
+          content: applyOperationToContent(doc.content || "", operation),
+          version: operation.version,
+        };
+      }),
+    );
+
+    if (operation.documentId === selectedDocIdRef.current) {
+      setDocForm((previous) => ({
+        ...previous,
+        content: applyOperationToContent(previous.content || "", operation),
+      }));
+    }
+  };
+
+  const processServerOperations = () => {
+    const buffer = receivedOperationBufferRef.current;
+
+    while (buffer.has(knownVersionRef.current + 1)) {
+      const operation = buffer.get(knownVersionRef.current + 1);
+      buffer.delete(knownVersionRef.current + 1);
+
+      const queue = pendingOperationsRef.current;
+      const pendingIndex = queue.findIndex((queued) => queued.opId === operation.opId);
+
+      if (pendingIndex === 0) {
+        queue.shift();
+      } else if (pendingIndex !== -1) {
+        queue.splice(pendingIndex, 1);
+      } else {
+        updateDocStateWithOperation(operation);
+
+        pendingOperationsRef.current = pendingOperationsRef.current
+          .map((queuedOperation) => {
+            const transformed = transformOperation(operation, queuedOperation);
+            return {
+              ...transformed,
+              sent: queuedOperation.sent,
+            };
+          })
+          .filter((queuedOperation) => queuedOperation.type !== "noop");
+
+        if (operation.documentId === selectedDocIdRef.current && operation.userId !== userRef.current?._id) {
+          setLastEditedBy(resolveEditorName(operation.userId, operation.userName));
+        }
+      }
+
+      knownVersionRef.current = operation.version;
+
+      setDocs((previous) =>
+        previous.map((doc) =>
+          doc._id === operation.documentId
+            ? {
+                ...doc,
+                version: operation.version,
+              }
+            : doc,
+        ),
+      );
+
+      trySendNextPendingOperation();
+    }
+  };
+
   const emitCursorUpdate = (position, immediate = false) => {
     if (!socketRef.current || !selectedDocIdRef.current) {
       return;
@@ -239,6 +528,10 @@ function App() {
         return;
       }
 
+      pendingOperationsRef.current = [];
+      receivedOperationBufferRef.current = new Map();
+      knownVersionRef.current = payload.version ?? 0;
+
       setDocForm({
         name: payload.name || "",
         description: payload.description || "",
@@ -260,28 +553,39 @@ function App() {
       );
     });
 
-    socket.on("document-content-updated", (payload) => {
+    socket.on("receive-operation", (payload) => {
+      if (!payload || typeof payload.version !== "number") {
+        return;
+      }
+
+      if (payload.version <= knownVersionRef.current) {
+        return;
+      }
+
+      receivedOperationBufferRef.current.set(payload.version, payload);
+      processServerOperations();
+    });
+
+    socket.on("resync-required", (payload) => {
       if (!payload || payload.documentId !== selectedDocIdRef.current) {
         return;
       }
 
-      if (payload.senderSocketId !== socket.id && payload.editedBy?.userId) {
-        setLastEditedBy(
-          resolveEditorName(payload.editedBy.userId, payload.editedBy.userName),
-        );
-      }
+      pendingOperationsRef.current = [];
+      receivedOperationBufferRef.current = new Map();
+      knownVersionRef.current = payload.version ?? 0;
 
       setDocForm((previous) => ({
         ...previous,
-        content: payload.content ?? previous.content,
+        content: payload.content || "",
       }));
 
       setDocs((previous) =>
         previous.map((doc) =>
-          doc._id === payload.documentId
+          doc._id === selectedDocIdRef.current
             ? {
                 ...doc,
-                content: payload.content ?? doc.content,
+                content: payload.content || "",
                 version: payload.version ?? doc.version,
               }
             : doc,
@@ -340,12 +644,12 @@ function App() {
     });
 
     return () => {
-      if (emitTimerRef.current) {
-        window.clearTimeout(emitTimerRef.current);
-      }
       if (cursorEmitTimerRef.current) {
         window.clearTimeout(cursorEmitTimerRef.current);
       }
+      pendingOperationsRef.current = [];
+      receivedOperationBufferRef.current = new Map();
+      knownVersionRef.current = 0;
       socket.disconnect();
       socketRef.current = null;
       setActiveEditors([]);
@@ -511,6 +815,9 @@ function App() {
       const updatedDocs = [created, ...docs];
       setDocs(updatedDocs);
       setSelectedDocId(created._id);
+      pendingOperationsRef.current = [];
+      receivedOperationBufferRef.current = new Map();
+      knownVersionRef.current = created.version ?? 0;
       setDocForm(initialDocForm);
       setNotice("Document created.");
     } catch (err) {
@@ -522,6 +829,9 @@ function App() {
 
   const handleSelectDoc = (doc) => {
     setSelectedDocId(doc._id);
+    pendingOperationsRef.current = [];
+    receivedOperationBufferRef.current = new Map();
+    knownVersionRef.current = doc.version ?? 0;
     setShowCollaborators(false);
     setCollaboratorEmail("");
     setCollaboratorFeedback({ type: "", message: "" });
@@ -534,6 +844,7 @@ function App() {
   };
 
   const handleRealtimeContentChange = (event) => {
+    const previousContent = docForm.content || "";
     const nextContent = event.target.value;
     const caretPosition = event.target.selectionStart || 0;
 
@@ -557,20 +868,23 @@ function App() {
       ),
     );
 
-    if (!socketRef.current) {
-      return;
-    }
+    const derivedOperations = deriveOperationsFromContentChange({
+      previousContent,
+      nextContent,
+      userId: userRef.current?._id,
+      createOpId: createLocalOpId,
+    });
 
-    if (emitTimerRef.current) {
-      window.clearTimeout(emitTimerRef.current);
-    }
+    if (derivedOperations.length) {
+      pendingOperationsRef.current.push(
+        ...derivedOperations.map((operation) => ({
+          ...operation,
+          sent: false,
+        })),
+      );
 
-    emitTimerRef.current = window.setTimeout(() => {
-      socketRef.current?.emit("document-content-change", {
-        documentId: selectedDoc._id,
-        content: nextContent,
-      });
-    }, 120);
+      trySendNextPendingOperation();
+    }
 
     emitCursorUpdate(caretPosition, true);
   };
@@ -697,6 +1011,10 @@ function App() {
       description: activeDoc.description || "",
       content: activeDoc.content || "",
     });
+
+    pendingOperationsRef.current = [];
+    receivedOperationBufferRef.current = new Map();
+    knownVersionRef.current = activeDoc.version ?? 0;
 
     setActiveEditors([]);
     setLastEditedBy("");
