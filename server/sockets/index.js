@@ -1,6 +1,8 @@
 import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
 import Document from "../models/docs.models.js";
+import OperationLog from "../models/operationLog.models.js";
+import { transformAgainstPriors } from "../utils/operationalTransform.utils.js";
 
 const OPERATION_DEBOUNCE_MS = Number(process.env.OPERATION_DEBOUNCE_MS || 120);
 const pendingOperationBatches = new Map();
@@ -75,15 +77,125 @@ const flushOperationBatch = async (io, batchKey) => {
     }
 
     const baseVersion = operations[0].version;
+    
+    // Check if there's a version mismatch (conflict scenario)
     if (doc.version !== baseVersion) {
-      return socket.emit("resync-required", {
+      // Fetch all operations since the client's base version
+      const priorOps = await OperationLog.find({
         documentId,
-        serverVersion: doc.version,
-        clientVersion: baseVersion,
-        content: doc.content,
+        version: { $gte: baseVersion, $lt: doc.version },
+      }).sort({ version: 1, timestamp: 1 });
+
+      // Transform incoming operations against prior operations
+      const transformedOps = transformAgainstPriors(operations, priorOps);
+
+      // Validate transformed operations
+      let nextContent = doc.content;
+      for (let index = 0; index < transformedOps.length; index += 1) {
+        const operation = transformedOps[index];
+
+        if (operation.type !== "insert" && operation.type !== "delete") {
+          return socket.emit("operation-error", "Only insert and delete operations are supported");
+        }
+
+        if (
+          typeof operation.position !== "number" ||
+          operation.position < 0 ||
+          operation.position > nextContent.length
+        ) {
+          return socket.emit("operation-error", "Invalid transformed operation position");
+        }
+
+        if (operation.type === "insert") {
+          if (typeof operation.text !== "string") {
+            return socket.emit("operation-error", "Operation text is required for insert");
+          }
+          nextContent =
+            nextContent.slice(0, operation.position) +
+            operation.text +
+            nextContent.slice(operation.position);
+        }
+
+        if (operation.type === "delete") {
+          if (
+            !Number.isInteger(operation.length) ||
+            operation.length <= 0 ||
+            operation.position + operation.length > nextContent.length
+          ) {
+            return socket.emit("operation-error", "Invalid delete length");
+          }
+          nextContent =
+            nextContent.slice(0, operation.position) +
+            nextContent.slice(operation.position + operation.length);
+        }
+      }
+
+      // Apply transformed operations with atomic update
+      const updatedDoc = await Document.findByIdAndUpdate(
+        documentId,
+        {
+          $set: { content: nextContent },
+          $inc: { version: transformedOps.length },
+        },
+        { new: true },
+      );
+
+      if (!updatedDoc) {
+        const latestDoc = await Document.findById(documentId);
+        return socket.emit("resync-required", {
+          documentId,
+          serverVersion: latestDoc?.version,
+          clientVersion: baseVersion,
+          content: latestDoc?.content ?? "",
+        });
+      }
+
+      // Log transformed operations
+      const newVersion = baseVersion;
+      for (let index = 0; index < transformedOps.length; index += 1) {
+        const op = transformedOps[index];
+        await OperationLog.create({
+          documentId,
+          userId,
+          type: op.type,
+          position: op.position,
+          text: op.text || "",
+          length: op.length || 0,
+          version: newVersion + index + 1,
+          timestamp: new Date(),
+        });
+      }
+
+      // Emit transformed operations to all clients
+      for (let index = 0; index < transformedOps.length; index += 1) {
+        const op = transformedOps[index];
+        socket.to(documentId).emit("receive-operation", {
+          ...op,
+          version: baseVersion + index + 1,
+          transformed: true,
+          originalVersion: baseVersion,
+        });
+      }
+
+      // Emit conflict-resolved acknowledgment to the sender
+      socket.emit("operation-ack", {
+        documentId,
+        version: updatedDoc.version,
+        appliedOperations: transformedOps.length,
+        transformed: true,
+        transformations: transformedOps.map((op, idx) => ({
+          originalVersion: baseVersion,
+          newVersion: baseVersion + idx + 1,
+          positionChanged: op.position !== operations[idx].position,
+          newPosition: op.position,
+        })),
       });
+
+      return;
     }
 
+    // No conflict: standard path
+    // Validate all operations
     for (let index = 0; index < operations.length; index += 1) {
       const operation = operations[index];
       const expectedVersion = baseVersion + index;
@@ -157,6 +269,22 @@ const flushOperationBatch = async (io, batchKey) => {
       });
     }
 
+    // Log operations
+    for (let index = 0; index < operations.length; index += 1) {
+      const op = operations[index];
+      await OperationLog.create({
+        documentId,
+        userId,
+        type: op.type,
+        position: op.position,
+        text: op.text || "",
+        length: op.length || 0,
+        version: baseVersion + index + 1,
+        timestamp: new Date(),
+      });
+    }
+
+    // Broadcast operations
     for (let index = 0; index < operations.length; index += 1) {
       const op = operations[index];
       socket.to(documentId).emit("receive-operation", {
