@@ -5,9 +5,40 @@ import Document from "../models/docs.models.js";
 const OPERATION_DEBOUNCE_MS = Number(process.env.OPERATION_DEBOUNCE_MS || 120);
 const pendingOperationBatches = new Map();
 const activeCursors = new Map();
+const operationCounters = new Map();
 
 const getCursorKey = (socketId, documentId) => `${documentId}:${socketId}`;
 const getBatchKey = (socketId, documentId) => `${socketId}:${documentId}`;
+
+const getNextOperationId = (socketId) => {
+  const nextValue = (operationCounters.get(socketId) || 0) + 1;
+  operationCounters.set(socketId, nextValue);
+  return `${socketId}:${nextValue}`;
+};
+
+const transformOperation = (op1, op2) => {
+  if (op1.type === "insert" && op2.type === "insert") {
+    if (op1.position < op2.position) {
+      return op2;
+    }
+
+    if (op1.position > op2.position) {
+      return {
+        ...op2,
+        position: op2.position + 1,
+      };
+    }
+
+    if ((op1.opId || "") < (op2.opId || "")) {
+      return {
+        ...op2,
+        position: op2.position + 1,
+      };
+    }
+  }
+
+  return op2;
+};
 
 const parseCookieHeader = (cookieHeader = "") => {
   return cookieHeader
@@ -297,6 +328,14 @@ const registerSocketHandlers = (io) => {
         return socket.emit("operation-error", "Operation position is required");
       }
 
+      if (
+        operation.opId !== undefined &&
+        operation.opId !== null &&
+        typeof operation.opId !== "string"
+      ) {
+        return socket.emit("operation-error", "Operation opId must be a string");
+      }
+
       if (operation.type === "insert" && typeof operation.text !== "string") {
         return socket.emit("operation-error", "Operation text is required for insert");
       }
@@ -309,6 +348,10 @@ const registerSocketHandlers = (io) => {
       }
 
       const batchKey = getBatchKey(socket.id, documentId);
+      const operationWithId = {
+        ...operation,
+        opId: operation.opId || getNextOperationId(socket.id),
+      };
       const existingBatch = pendingOperationBatches.get(batchKey);
 
       if (!existingBatch) {
@@ -320,13 +363,18 @@ const registerSocketHandlers = (io) => {
           socket,
           documentId,
           userId,
-          operations: [operation],
+          operations: [operationWithId],
           timer,
         });
         return;
       }
 
-      existingBatch.operations.push(operation);
+      let transformedOperation = operationWithId;
+      for (const queuedOperation of existingBatch.operations) {
+        transformedOperation = transformOperation(queuedOperation, transformedOperation);
+      }
+
+      existingBatch.operations.push(transformedOperation);
 
       if (existingBatch.timer) {
         clearTimeout(existingBatch.timer);
@@ -372,6 +420,7 @@ const registerSocketHandlers = (io) => {
       }
 
       console.log("A user disconnected: " + socket.id);
+      operationCounters.delete(socket.id);
     });
   });
 };
