@@ -458,7 +458,12 @@ function App() {
       } else if (pendingIndex !== -1) {
         queue.splice(pendingIndex, 1);
       } else {
-        updateDocStateWithOperation(operation);
+        let operationForLocalView = operation;
+        for (const queuedOperation of pendingOperationsRef.current) {
+          operationForLocalView = transformOperation(queuedOperation, operationForLocalView);
+        }
+
+        updateDocStateWithOperation(operationForLocalView);
 
         pendingOperationsRef.current = pendingOperationsRef.current
           .map((queuedOperation) => {
