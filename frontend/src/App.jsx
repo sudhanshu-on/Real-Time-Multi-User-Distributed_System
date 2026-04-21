@@ -25,6 +25,33 @@ const initialDocForm = {
   content: "",
 };
 
+const opCounterByClient = new Map();
+
+const generateOpId = (clientId) => {
+  const nextCounter = (opCounterByClient.get(clientId) || 0) + 1;
+  opCounterByClient.set(clientId, nextCounter);
+
+  const timestamp = String(Date.now()).padStart(13, "0");
+  const counter = String(nextCounter).padStart(6, "0");
+
+  return `${timestamp}-${clientId}-${counter}`;
+};
+
+const getOrCreateClientId = () => {
+  const storageKey = "collab-client-id";
+  const existingClientId = window.localStorage.getItem(storageKey);
+  if (existingClientId) {
+    return existingClientId;
+  }
+
+  const generatedClientId =
+    window.crypto?.randomUUID?.() ||
+    `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  window.localStorage.setItem(storageKey, generatedClientId);
+  return generatedClientId;
+};
+
 const compareOpOrder = (a, b) => {
   if (a.opId < b.opId) {
     return -1;
@@ -229,10 +256,10 @@ function App() {
   const [lastEditedBy, setLastEditedBy] = useState("");
   const socketRef = useRef(null);
   const cursorEmitTimerRef = useRef(null);
+  const clientIdRef = useRef("");
   const pendingOperationsRef = useRef([]);
   const receivedOperationBufferRef = useRef(new Map());
   const knownVersionRef = useRef(0);
-  const localOperationCounterRef = useRef(0);
   const selectedDocIdRef = useRef("");
   const docsRef = useRef([]);
   const userRef = useRef(null);
@@ -262,6 +289,12 @@ function App() {
       window.clearTimeout(timerId);
     };
   }, [collaboratorFeedback.message]);
+
+  useEffect(() => {
+    if (!clientIdRef.current) {
+      clientIdRef.current = getOrCreateClientId();
+    }
+  }, []);
 
   useEffect(() => {
     selectedDocIdRef.current = selectedDocId;
@@ -354,8 +387,11 @@ function App() {
   };
 
   const createLocalOpId = () => {
-    localOperationCounterRef.current += 1;
-    return `${userRef.current?._id || "anonymous"}:${Date.now()}:${localOperationCounterRef.current}`;
+    if (!clientIdRef.current) {
+      clientIdRef.current = getOrCreateClientId();
+    }
+
+    return generateOpId(clientIdRef.current);
   };
 
   const trySendNextPendingOperation = () => {
