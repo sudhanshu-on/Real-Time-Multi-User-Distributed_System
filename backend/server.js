@@ -101,7 +101,7 @@ const transformOperation = (op1, op2) => {
       return out;
     }
 
-    if (op1.position === out.position && compareOpOrder(op1, out) <= 0) {
+    if (op1.position === out.position && compareOpOrder(op1, out) < 0) {
       out.position += op1.value.length;
     }
 

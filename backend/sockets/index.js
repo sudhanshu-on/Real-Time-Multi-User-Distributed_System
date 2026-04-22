@@ -387,6 +387,7 @@ const registerSocketHandlers = (io) => {
 
     socket.on("receive-operation", async (op) => {
       console.log("Received Operation !", op);
+      applyOperation(op);
     });
 
     socket.on("leave-document", (documentId) => {
